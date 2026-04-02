@@ -1,0 +1,1019 @@
+<html>
+<style type="text/css">
+
+    body {
+    margin: 0;
+    background-color: black;
+    }
+
+    #c {
+    display: block;
+    }
+
+</style>
+<audio id="theme" loop> <source src="delivery-force-theme.ogg" type="audio/ogg"> </audio>
+<audio id="engine" loop> <source src="delivery-force-engine.ogg" type="audio/ogg"> </audio>
+<audio id="sparks" loop> <source src="delivery-force-sparks.ogg" type="audio/ogg"> </audio>
+<!--<audio id="sparkSuccess"> <source src="delivery-force-welldone.ogg" type="audio/ogg"> </audio>-->
+<audio id="welldone"> <source src="delivery-force-welldone.ogg" type="audio/ogg"> </audio>
+<canvas id="c" width="948" height="533"></canvas>
+<script>
+
+
+    //
+    // Delivery Force
+    // by teadrinker
+    //
+    //  2023-05-01
+    // (ludum-dare 53)
+    //
+    // License: GPL
+    //
+
+
+    const snd_theme = document.getElementById('theme');
+    const snd_engine = document.getElementById('engine');
+    const snd_sparks = document.getElementById('sparks');
+    //const snd_sparkSuccess = document.getElementById('sparkSuccess'); 
+    const snd_welldone = document.getElementById('welldone');
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d')
+    //const glsl = SwissGL(canvas);
+
+    var screenW = canvas.width
+    var screenH = canvas.height
+
+
+    // helpers
+    var mix = (a,b,t) => a+t*(b-a)
+    var mix3 = (a,b,t) => [mix(a[0],b[0],t),mix(a[1],b[1],t),mix(a[2],b[2],t)]
+    var clamp = (t,a,b) => Math.max(a,Math.min(b,t))
+    var min = (a,b) => a < b ? a : b
+    var max = (a,b) => a > b ? a : b
+    var abs = (a) => a < 0 ? -a : a
+    var floor = (a) => Math.floor(a)
+    var sq = (x) => x*x
+    var smoothstep = (a,b,x) => { if( x<a ) return 0; if( x>b ) return 1; var y = (x-a)/(b-a); return y*y*(3.0-2.0*y); }
+    var isDigit = (charCode) => charCode >= 48 && charCode <= 57
+    var isCapitalLetter = (charCode) => charCode >= 65 && charCode <= 90
+
+    // keys init
+    key = {}
+    keysUpdate = (event, down) => {
+        key[event.keyCode] = down;
+    }
+    document.addEventListener("keydown", (event) => keysUpdate(event, true));
+    document.addEventListener("keyup", (event) => keysUpdate(event, false));
+    var left = 37
+    var up = 38
+    var right = 39
+    var down = 40
+    var space = 32
+    var keyA = 'A'.charCodeAt(0)
+    var keyW = 'W'.charCodeAt(0)
+    var keyS = 'S'.charCodeAt(0)
+    var keyD = 'D'.charCodeAt(0)
+
+
+    var startedAudio = false;
+
+    /*
+    var loadTex = (name, f) => {
+        var image = new Image()
+
+        image.src = name+".png"
+        image.onload = function() {
+            f(image)
+
+            // hmm, hehe, I cant even load a texture to use with swissgl.js?
+
+            //var texture = glsl({}, {size:[image.width, image.height], format:'r8', data:image, tag:name});
+
+            //var gl = glsl.gl           
+            //var texture = gl.createTexture()
+            //gl.bindTexture  (gl.TEXTURE_2D, texture)
+            //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+            //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+            //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+            //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+            //gl.texImage2D   (gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image)
+            //f(texture)
+        };
+    }
+
+    var shipTex = null
+    loadTex("shipTex", (t) => shipTex = t)
+    */
+
+    doLine = (x,y,x2,y2,col,alpha) => {
+        ctx.strokeStyle = col
+        ctx.globalAlpha = alpha != undefined ? alpha : 1;
+        ctx.lineWidth = 2;
+        ctx.beginPath()
+        ctx.moveTo(x,y)
+        ctx.lineTo(x2,y2)
+        ctx.stroke();
+    }
+
+    doRect = (x,y,w,h,col,alpha) => {
+        ctx.fillStyle = col
+        ctx.globalAlpha = alpha != undefined ? alpha : 1;
+        ctx.fillRect(x,y,w,h)
+    }
+
+    
+
+
+
+    var physicsGravity = 0.005
+    var physicsDamping = 0.001 // 0-1
+    var physicsSpringSolidness = 1 // 0-1
+
+    var dist = (o1, o2) => { return Math.sqrt((o1.x-o2.x)*(o1.x-o2.x) + (o1.y-o2.y)*(o1.y-o2.y)) }
+
+    var worldSpec = [
+    "OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO",        
+    "O                                                                     O",
+    "O                                                                  9  O",
+    "O                                                                 OOOOO",
+    "O                                                                 OOOOO",
+    "O                                                                 OOOOO",
+    "O A                                                               OOOOO",
+    "OOOO                                                       4      OOOOO",
+    "OOOO        5        7                                    OOO     OOOOO",
+    "OOOO       OOO  E   OO                      F             OOO     OOOOO",
+    "OOOO    OOOOOOOOO   OO                     OO             OOO     OOOOO",
+    "OOOO  OOOOOOOOOOOO  OO                 3   OO             OOO     OOOOO",
+    "OOOOCOOOOOOOOOOOOOOOOO                OOO  OO             OOO     OOOOO",
+    "OOOOOOOOOOOOOOOOOOOOOO B            H OOO  OO       8   G OOO D OOOOOOO",
+    "OOOOOOOOOOOOOOOOOOOOOOOO        2 OOOOOOOOOOO  6  OOOOOOOOOOOOOOOOOOOOO",
+    "OOOOOOOOOOOOOOOOOOOOOOOO       OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO",
+    "OOOOOOOOOOOOOOOOOOOOOOOO       OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO",
+    "OOOOOOOOOOOOOOOOOOOOOOOO 0 .51 OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO",
+    "OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO",
+    ]
+
+    var worldStride = worldSpec[0].length
+    var worldTileCountY = worldSpec.length
+    var worldScaleX = 120
+    var worldScaleY = 120      
+    var worldOffsetX = 0  // calculated later
+    var worldOffsetY = 0  // calculated later
+    var worldStartRefX = 0 // calculated later
+    var worldStartRefY = 0 // calculated later
+    var world = []    
+    var worldToRender = [] // instead of proper culling hehe
+    var worldLocations = [] // drop-off/pick-up areas
+
+    // preprocess world
+    for(var i = 0; i < worldSpec.length; i++)
+        world = world.concat(worldSpec[i].split('').map(x=> x == ' ' ? 0 : x))
+
+    for(var i = 0; i < world.length; i++) {
+        if(world[i] === 0)
+            continue
+        else if(world[i] == 'O')
+            worldToRender.push({x:i%worldStride, y:floor(i/worldStride)})        
+        else {
+            var refix = i%worldStride
+            var refiy = floor(i/worldStride)            
+            if(world[i] == '.') {
+                worldOffsetX = +(screenW - worldScaleX)/2 -refix*worldScaleX
+                //worldOffsetY = +(screenH - worldScaleY)/2  -refiy*worldScaleY
+                worldOffsetY = +screenH/2.5 -refiy*worldScaleY
+
+                worldStartRefX = worldScaleX * (refix + 0.5) + worldOffsetX
+                worldStartRefY = worldScaleY * (refiy + 0.5) + worldOffsetY    
+            }            
+            else {
+                var cCode = world[i].charCodeAt(0)
+                var id = -1
+                if(isDigit(cCode))
+                    id = cCode - 48
+                else if(isCapitalLetter(cCode)) 
+                    id = (cCode - 65) + 10
+                if(id === -1)
+                    throw "invalid world id: " + world[i] + " at " + i + " (" + refix + "," + refiy + ")"
+                if(worldLocations.length <= id)
+                    worldLocations.length = id+1
+                worldLocations[id] = {x:refix + 0.5, y:refiy + 0.5} // delay scale and offset since they are not yet available
+            }
+            world[i] = 0 // remove from collision map        
+        }
+    }
+
+    for(var i = 0; i < worldLocations.length; i++) {
+        worldLocations[i] = worldLocations[i] == undefined ? {x:0,y:0} : {
+            x:worldLocations[i].x*worldScaleX + worldOffsetX, 
+            y:worldLocations[i].y*worldScaleY + worldOffsetY
+        }
+        // drop-off/pick-up area
+        var w = worldScaleX/2 - 12
+        var h = worldScaleY
+        var border = 1.5
+        var extraHeight = 70
+        worldLocations[i].areaMinX = worldLocations[i].x - w/2 - border
+        worldLocations[i].areaMinY = worldLocations[i].y - h/2 - border - extraHeight
+        worldLocations[i].areaW = w + border*2
+        worldLocations[i].areaH = h + border*2 + extraHeight
+    }
+
+    var getLocation = (id) => {
+        var r = worldLocations[id%worldLocations.length]
+        if(r == undefined)
+            return worldLocations[1]
+        return r
+    }    
+
+    
+
+
+    var gameProgress = 0
+    var gameProgressSmoothed = 0
+
+    var trimWorldSize = 0.5
+    var worldMinX = worldOffsetX + worldScaleX * trimWorldSize
+    var worldMinY = worldOffsetY + worldScaleX * trimWorldSize
+    var worldMaxX = worldOffsetX + worldScaleX * (worldStride - trimWorldSize)
+    var worldMaxY = worldOffsetY + worldScaleY * (worldTileCountY - trimWorldSize)
+
+
+
+    var renderWorld = () => {
+        for(var i = 0; i < worldToRender.length; i++) {
+            var tile = worldToRender[i]
+            var ofs = 1.5
+            doRect(tile.x*worldScaleX + worldOffsetX + ofs, tile.y*worldScaleY + worldOffsetY + ofs, worldScaleX - ofs * 2, worldScaleY - ofs*2, "#000011",)
+        }
+    }
+    
+
+    var leftNormal  = {x:-1, y:0}
+    var rightNormal = {x:1, y:0}
+    var upNormal    = {x:0, y:-1}
+    var downNormal  = {x:0, y:1}
+    var normalCases = [leftNormal, upNormal, downNormal, rightNormal]
+
+    var collision = (x,y) => {
+        x -= worldOffsetX
+        y -= worldOffsetY
+        x /= worldScaleX
+        y /= worldScaleY
+        var ix = floor(x)
+        var iy = floor(y)
+        x -= ix
+        y -= iy
+
+        var collisionMat = world[ix + iy*worldStride]
+        if(collisionMat === 0)
+            return;
+
+        var normalCase = floor(x + y)*2 + floor(1 + x - y)     // https://madtealab.com/?V=1&F=1&G=1&E=0&R=0&W=600&GW=546&GH=408&GX=0.5&GY=0.5&GS=1.4&GQ=90&GQI=1&f1=floor%28x%2By%29%2A2+%2B+floor%281%2Bx-y%29&sy1=0.2&fs1=2D
+        var dist = min(0.5 - abs(0.5 - x), 0.5 - abs(0.5 - y)) // https://madtealab.com/?V=1&F=1&G=1&E=0&R=0&W=708&GW=654&GH=408&GX=0.5&GY=0.5&GS=1.4&GQ=90&GQI=1&f1=min%280.5-abs%280.5-x%29%2C0.5-abs%280.5-y%29%29&fs1=2D
+        
+        return [collisionMat, normalCases[normalCase], dist * worldScaleX]
+    }
+
+    var objects = []
+    var springs = []
+    var defaultCol = ['#aaaaaa']
+    var createSpring = (o1,o2,colorRef,solidness,length) => {
+        if(colorRef == undefined)
+            colorRef = defaultCol
+        if(length == undefined)
+            length = dist(o1,o2)
+        if(solidness == undefined)
+            solidness = physicsSpringSolidness
+        var spring = {o1, o2, length, colorRef, solidness}
+        springs.push(spring)
+        return spring
+    }
+
+    var removeSpring = (spring) => {
+        var id = springs.indexOf(spring)
+        if(id != -1) {
+            springs[id] = springs[springs.length-1]
+            springs.pop()
+        }
+    }
+
+    var normal = (o1, o2) => { 
+        var dx = o2.x - o1.x;
+        var dy = o2.y - o1.y;
+        var len = Math.sqrt(dx*dx + dy*dy);
+        return {x:dx/len, y:dy/len}
+    }
+    var crossnormal = (o1, o2) => { 
+        var dx = o2.x - o1.x;
+        var dy = o2.y - o1.y;
+        var len = Math.sqrt(dx*dx + dy*dy);
+        return {x:-dy/len, y:dx/len}
+    }
+
+    var doLineRef = (id1,id2,col,alpha) => {
+        var o1 = objects[id1]
+        var o2 = objects[id2]
+        doLine(o1.x,o1.y,o2.x,o2.y,col,alpha)
+    }
+
+    var rndint = (max_exclusive) => Math.floor(Math.random() * max_exclusive)
+    var rnditem = (array) => array[rndint(array.length)]
+    var rnd = []
+    for(var i = 0; i < 20000; i++)
+        rnd.push(Math.random())
+
+
+    var thrustColors = []
+    for(var i = 0; i < 100; i++) 
+        thrustColors.push('rgb('+(mix3([0,10,80],[20,190,255],i/100).map(x => Math.floor(x)).join(","))+')')
+        //thrustColors.push('rgb('+(mix3([255,0,0],[255,200,100],i/100).map(x => Math.floor(x)).join(","))+')')
+    for(var i = 0; i < 50; i++)
+        thrustColors.push('rgb('+(mix3([255,255,255],[20,190,255],i/100).map(x => Math.floor(x)).join(","))+')')
+
+    updateOrDrawThruster = (id1,id2,amt,draw) => {
+        var o1 = objects[id1]
+        var o2 = objects[id2]
+        var n = crossnormal(o1,o2)
+        if(draw) {
+            n.x*=2
+            n.y*=2
+            doLine(o1.x - n.x, o1.y - n.y, o2.x - n.x, o2.y - n.y, rnditem(thrustColors), 1)            
+        }
+        else {
+            // update
+            o1.dx += n.x * amt
+            o1.dy += n.y * amt
+            o2.dx += n.x * amt
+            o2.dy += n.y * amt            
+        }
+    }
+    updateThruster = (id1,id2,amt) => updateOrDrawThruster(id1,id2,amt)
+    drawThruster = (id1,id2,amt) => updateOrDrawThruster(id1,id2,amt,true)
+
+
+
+    var createObject = (x, y, mass) => {
+            var obj = {
+            x, y,
+            px: x, py: y,
+            dx: 0, dy: 0,
+            mass,
+        }
+        objects.push(obj)
+        return obj
+    }
+
+    updatePhysics = () => {
+
+        for(var i=0;i<objects.length;i++) {
+            var o = objects[i]
+
+            var nx = 2*o.x - o.px // verlet integration, not sure if actually correct... not gonna attempt dynamic time step hehe...
+            var ny = 2*o.y - o.py
+
+            nx += o.dx // apply delta/acceleration
+            ny += o.dy + physicsGravity
+
+            var col = collision(nx, ny)
+            if(col !== undefined) {
+                var normal = col[1]
+                var dist = col[2]
+                nx += normal.x * dist
+                ny += normal.y * dist
+            }
+
+            //var dampx = physicsDamping
+            //if(ny > 500) {
+            //    ny = 500, 
+            //    dampx = 0.1 // ground friction hack
+            //}  
+
+            nx = mix(nx, o.x, physicsDamping)
+            ny = mix(ny, o.y, physicsDamping)
+
+            o.px = o.x
+            o.py = o.y
+            o.x = nx
+            o.y = ny
+            o.dx = 0
+            o.dy = 0
+        }           
+
+        for(var k = 0; k < 8; k++) { // do multiple iterations to make it more stable
+            for(var i = 0; i < springs.length; i++) {
+
+                var j = k&1 === 0 ? i : springs.length-1-i // alternate between forward and backward passes.
+                                                          // since we don't double buffer, springs in chains 
+                                                          // get arbitrary priority, this should help a bit. 
+
+                var o1 = springs[i].o1
+                var o2 = springs[i].o2
+                var len = springs[i].length
+                var solidness = springs[i].solidness
+
+                var massSum = o1.mass + o2.mass
+                var centerX = (o1.x*o1.mass + o2.x*o2.mass) / massSum
+                var centerY = (o1.y*o1.mass + o2.y*o2.mass) / massSum
+
+                var dx = o2.x - o1.x
+                var dy = o2.y - o1.y
+
+                // normalize
+                var l = Math.sqrt(dx*dx + dy*dy)
+                dx/=l; dy/=l;
+
+                var mul = len / massSum
+
+                // when solidness == 1, the spring is more like a stick
+                // however, the nature of verlet integration means that
+                // everything is still gonna be springy...
+
+                o1.x = mix(o1.x,  centerX - o2.mass * dx * mul, solidness);
+                o1.y = mix(o1.y,  centerY - o2.mass * dy * mul, solidness);
+                o2.x = mix(o2.x,  centerX + o1.mass * dx * mul, solidness);
+                o2.y = mix(o2.y,  centerY + o1.mass * dy * mul, solidness);
+
+            }
+        }         
+    }
+    
+    var createSoftMesh = (p, lineIds) => {
+        var obj = []
+        var r = { vObjects : obj, vOffset : objects.length, lOffset : springs.length}
+        for(var i = 0; i < p.length; i += 2)
+        {
+            obj.push(createObject(p[i],p[i+1], 1))
+        }
+        for(var i = 0; i < lineIds.length; i += 2)
+        {
+            var v1 = obj[lineIds[i  ]]
+            var v2 = obj[lineIds[i+1]]        
+            createSpring(v1, v2)
+        }     
+        return r   
+    } 
+
+    var boxes = []
+
+    var createBox = (x, y, size, width, height, mass, colorRef) => {
+        x -= width*size/2
+        y -= height*size/2
+        var obj = []
+        var r = { vObjects : obj, vOffset : objects.length, lOffset : springs.length}
+        var corners = []
+        for(var j = 0; j <= height; j++)
+        {
+            for(var i = 0; i <= width; i++)
+            {
+                var o = createObject(x + i*size, y + j*size, mass)
+                if(i==0 && j==0 || i==width && j==0 || i==0 && j==height || i==width && j==height)
+                    corners.push(o)
+                obj.push(o)
+            }
+        }
+        for(var j = 0; j <= height; j++)
+        {
+            for(var i = 0; i <= width; i++)
+            {
+                if(i < width && j < height)
+                {
+                    var v1 = obj[i   +  j   *(width+1)]
+                    var v2 = obj[i   + (j+1)*(width+1)]
+                    var v3 = obj[i+1 +  j   *(width+1)]
+                    var v4 = obj[i+1 + (j+1)*(width+1)]
+                    
+                    createSpring(v1, v2, colorRef)
+                    createSpring(v1, v3, colorRef)
+                    createSpring(v1, v4, colorRef)
+                    createSpring(v2, v3, colorRef)
+                }
+                else if(i < width)
+                {
+                    var v1 = obj[i   + j *(width+1)]
+                    var v2 = obj[i+1 + j *(width+1)]
+                    
+                    createSpring(v1, v2, colorRef)
+                }
+                else if(j < height)
+                {
+                    var v1 = obj[i +  j   *(width+1)]
+                    var v2 = obj[i + (j+1)*(width+1)]
+                    
+                    createSpring(v1, v2, colorRef)
+                }           
+            }
+        }        
+        r.corners = corners
+        r.getPos = () => ({ x: (corners[0].x + corners[1].x + corners[2].x + corners[3].x)/4, y: (corners[0].y + corners[1].y + corners[2].y + corners[3].y)/4 })
+        r.resetAtPos = (x, y) => {
+            x -= width*size/2
+            y -= height*size/2
+            for(var j = 0; j <= height; j++)
+            {
+                for(var i = 0; i <= width; i++)
+                {
+                    var o = obj[i + j*(width+1)]
+                    o.px = o.x = x + i*size
+                    o.py = o.y = y + j*size
+                    o.dx = o.dy = 0
+                }
+            }
+        }
+        r.insideRect = (location) => {
+            var p = r.getPos()
+            return  p.x > location.areaMinX && p.x < location.areaMinX + location.areaW && 
+                    p.y > location.areaMinY && p.y < location.areaMinY + location.areaH
+        }
+        boxes.push(r)
+        return r   
+    }
+ 
+    // rubberband style
+    //var ropeSegLength = 3
+    //var ropeSolidNess = 0.3
+    var ropeSegLength = 10
+    var ropeSolidNess = 1.0
+    var ropeColorDefault = '#333333'
+    var ropeColorAttachedDefault = '#7788aa'
+    var ropeColor = [ropeColorDefault]
+    var createRope = (segments, globalObjId, dx, dy, solidness, nodeMass) => {
+        var start = objects[globalObjId]
+        var x = start.x
+        var y = start.y
+        var obj = []
+        var r = { vObjects : obj, vOffset : objects.length, lOffset : springs.length}
+        for(var i = 0; i < segments; i++)
+        {
+            obj.push(createObject(x + dx*(i+1), y + dy*(i+1), nodeMass))
+        }
+        createSpring(start, obj[0], ropeColor, solidness)
+        for(var i = 0; i < segments-1; i++)
+        {
+            var v1 = obj[i  ]
+            var v2 = obj[i+1]        
+            createSpring(v1, v2, ropeColor, solidness)
+        }     
+        return r   
+    }
+
+
+
+
+    // player ship
+
+    // https://madtealab.com/?V=1&C=3&F=1&G=1&O=1&W=889&GW=835&GH=340&GX=0.9338235294117647&GY=0.17573529411764705&GS=1&EH=273&a=4&aMa=10&aI=1&aN=centerN&b=20&bMa=20&bI=1&bN=connectionsN&c=0.25555555555555554&cN=maxDist&p=%5B0.002%2C0.099%2C-0.002%2C0.327%2C-0.001%2C0.656%2C0.002%2C1.066%2C-0.055%2C0.823%2C-0.07%2C0.411%2C-0.194%2C0.358%2C-0.065%2C0.143%2C-0.139%2C0.602%2C-0.272%2C0.443%2C-0.483%2C0.252%2C-0.397%2C0.251%2C-0.527%2C0.394%2C-0.368%2C0.394%2C-0.561%2C0.077%2C-0.315%2C0.076%2C%5D&Expr=draw+%3D+%28%29+%3D%3E+%7B%0A+++plotSpace%28%29%0A%0A+++outP+%3D+%5B%5D%0A+++yy+%3D+%5B%5D%0A+++for%28var+i+%3D+0%3B+i+%3C+centerN%3B+i%2B%2B%29+%7B%0A++++++outP.push%280%29%0A++++++outP.push%28p%5Bi%5D.y%29%0A+++%7D%0A+++for%28var+i+%3D+centerN%3B+i+%3C+p.length%3B+i%2B%2B%29+%7B%0A++++++outP.push%28p%5Bi%5D.x%29%0A++++++outP.push%28p%5Bi%5D.y%29%0A++++++outP.push%28-p%5Bi%5D.x%29%0A++++++outP.push%28p%5Bi%5D.y%29%0A+++%7D%0A+++var+N+%3D+outP.length%2F2%3B%0A+++var+skip+%3D+%7B%7D%0A%0A+++for%28var+i+%3D+0%3B+i+%3C+N%3B+i%2B%2B%29+%7B%0A++++++var+ax%3DoutP%5Bi%2A2++%5D%0A++++++var+ay%3DoutP%5Bi%2A2%2B1%5D%0A++++++for%28var+c+%3D+0%3B+c+%3C+connectionsN%3B+c%2B%2B%29+%7B%0A+++++++++var+minDist+%3D+99999999%0A+++++++++var+minDistId+%3D+-1%0A+++++++++for%28var+j+%3D+0%3B+j+%3C+N%3B+j%2B%2B%29+%7B%0A++++++++++++if%28i%3D%3Dj%29%0A+++++++++++++++continue%0A++++++++++++if%28skip%5Bmin%28i%2Cj%29%2B%27%7C%27%2Bmax%28i%2Cj%29%5D%29%0A++++++++++++%7B%0A+++++++++++++++continue%0A++++++++++++%7D+%0A++++++++++++var+bx%3DoutP%5Bj%2A2++%5D%0A++++++++++++var+by%3DoutP%5Bj%2A2%2B1%5D%0A++++++++++++var+dist+%3D+sqrt%28sq%28ax-bx%29+%2B+sq%28ay-by%29%29%0A++++++++++++if%28dist+%3C+minDist+%26%26+dist+%3C+maxDist%29%0A++++++++++++%7B%0A+++++++++++++++minDist+%3D+dist%0A+++++++++++++++minDistId+%3D+j%0A++++++++++++%7D%0A+++++++++%7D%0A+++++++++if%28minDistId+%21%3D+-1%29+%0A+++++++++%7B%0A++++++++++++skip%5Bmin%28i%2CminDistId+%29%2B%27%7C%27%2Bmax%28i%2CminDistId+%29%5D+%3D+true%0A++++++++++++var+bx%3DoutP%5BminDistId+%2A2++%5D%0A++++++++++++var+by%3DoutP%5BminDistId+%2A2%2B1%5D%0A++++++++++++line%28ax%2Cay%2C+bx%2C+by%29%0A++++++++++++yy.push%28i%29%0A++++++++++++yy.push%28minDistId%29%0A+++++++++%7D+%0A++++++%7D%0A+++%7D%0A+++xx+%3D+outP%0A%7D%0A+%0Aout%28%22var+shipVerts+%3D+%5B%22+%2B+xx+%2B+%22%5D%22%29%0Aout%28%22var+shipLines+%3D+%5B%22+%2B+yy+%2B+%22%5D%22%29+%0A+
+
+    var shipVerts = [0,0.099,0,0.327,0,0.656,0,1.066,-0.055,0.823,0.055,0.823,-0.07,0.411,0.07,0.411,-0.194,0.358,0.194,0.358,-0.065,0.143,0.065,0.143,-0.139,0.602,0.139,0.602,-0.272,0.443,0.272,0.443,-0.483,0.252,0.483,0.252,-0.397,0.251,0.397,0.251,-0.527,0.394,0.527,0.394,-0.368,0.394,0.368,0.394,-0.561,0.077,0.561,0.077,-0.315,0.076,0.315,0.076]
+    var shipLines = [0,10,0,11,0,1,1,6,1,7,1,10,1,11,1,8,1,9,2,12,2,13,2,4,2,5,2,6,2,7,3,4,3,5,4,5,4,12,5,13,6,8,6,7,6,12,6,14,7,9,7,13,7,15,8,14,8,22,8,18,8,12,8,10,9,15,9,23,9,19,9,13,9,11,10,11,12,14,13,15,14,22,14,18,15,23,15,19,16,18,16,20,16,22,16,24,16,26,17,19,17,21,17,23,17,25,17,27,18,22,18,26,18,20,18,24,19,23,19,27,19,21,19,25,20,22,21,23,24,26,25,27]
+    
+
+    var shipVertsN = shipVerts.length / 2
+    var thrusterDownL = shipVertsN - 3
+    var thrusterDownR = shipVertsN - 4    
+    var thrusterUpL = shipVertsN - 7
+    var thrusterUpR = shipVertsN - 8
+    var ropeAttachmentId = 0
+
+    for(var i = 0; i < shipVerts.length; i+=2) {
+        shipVerts[i  ] =  shipVerts[i  ] * 50 + worldStartRefX 
+        shipVerts[i+1] = -shipVerts[i+1] * 50 + worldStartRefY
+    }
+
+    var playerShip = createSoftMesh(shipVerts, shipLines)
+    var rope = createRope(16, playerShip.vOffset + ropeAttachmentId, 0, -ropeSegLength, ropeSolidNess, 0.1)
+    //var rope = createSoftMesh([],[])
+
+
+
+
+
+
+    var cameraTargetX = -666
+    var cameraTargetY = 0
+    var cameraZoom = 1
+
+    var cameraTargetXS = -666
+    var cameraTargetYS = 0
+    var cameraZoomS = 1
+
+    var prevCameraTargetX = -666
+    var prevCameraTargetY = 0
+
+    var boxColor = [ropeColorAttachedDefault]
+    
+    createBox(worldLocations[0].x, worldLocations[0].y,20,1,1, 3, boxColor)
+    createBox(worldLocations[8].x, worldLocations[8].y,20,2,1, 4, boxColor)
+    createBox(worldLocations[10].x, worldLocations[10].y,20,2,2, 5, boxColor)
+
+    lastRopeNode = rope.vObjects[rope.vObjects.length-1]
+
+    // NOTE: this is indexed by gameProgress/2 (since each delivery is 2 steps, pickup + dropoff)
+    var boxesForGameProgress = [boxes[0] /* first has to be 0*/, boxes[1], boxes[0],boxes[2], boxes[1], boxes[2], boxes[1], boxes[2], boxes[1], boxes[2]]
+    var getCorrectBox = (gameProgress) => {
+        return boxesForGameProgress[min(floor(gameProgress/2), boxesForGameProgress.length-1)]
+    }    
+    correctBoxAttached = false
+    attachedBox = null
+    droppedOffBox = null
+    
+
+
+    var ropeAttached = null
+    var ropeCanBeAttachedOrDetached = false
+    var detachRope = () => {
+        if(ropeAttached) {
+            snd_sparks.pause()
+            removeSpring(ropeAttached)
+            ropeAttached = null
+            ropeCanBeAttachedOrDetached = false // wait for key release
+            ropeColor[0] = ropeColorDefault
+        }
+    }
+
+    var handleRopeAttachment = () => {
+
+        var spacebarIsDown = key[space]
+        if(!spacebarIsDown)
+        ropeCanBeAttachedOrDetached = true
+
+        if(!ropeAttached) {
+            if(spacebarIsDown && ropeCanBeAttachedOrDetached) {
+                if(!snd_sparks.playing) {
+                    snd_sparks.play()
+                }
+
+                ropeColor[0] = rnditem(thrustColors)
+
+                // pull rope towards closest vert of the closest box
+                var closestBoxId = -1
+                var closestBoxDistSq = Infinity
+                for(var i = 0; i< boxes.length; i++) {
+                    var b = boxes[i]
+                    var boxPos = b.getPos()
+                    var distSq = sq(boxPos.x - lastRopeNode.x) + sq(boxPos.y - lastRopeNode.y)
+                    if(distSq < closestBoxDistSq) {
+                        closestBoxDistSq = distSq
+                        closestBoxId = i
+                    }
+                }
+                boxObjs = boxes[closestBoxId].vObjects
+                var closestVertId = -1
+                var closestVertDistSq = Infinity
+                for(var i = 0; i < boxObjs.length; i++) {
+                    var v = boxObjs[i]
+                    var distSq = sq(v.x - lastRopeNode.x) + sq(v.y - lastRopeNode.y)
+                    if(distSq < closestVertDistSq) {
+                        closestVertDistSq = distSq
+                        closestVertId = i
+                    }
+                }
+                var vertDist = Math.sqrt(closestVertDistSq)
+                var pullStrength = 0.6
+                lastRopeNode.dx += pullStrength * (boxObjs[closestVertId].x - lastRopeNode.x) / vertDist
+                lastRopeNode.dy += pullStrength * (boxObjs[closestVertId].y - lastRopeNode.y) / vertDist
+                if(vertDist < 12) {
+                    ropeAttached = createSpring(lastRopeNode, boxObjs[closestVertId], ropeColor, ropeSolidNess, ropeSegLength)    
+                    attachedBox = boxes[closestBoxId]
+                    correctBoxAttached = getCorrectBox(gameProgress) === attachedBox
+                    ropeCanBeAttachedOrDetached = false // wait for key release
+                    ropeColor[0] = ropeColorAttachedDefault
+                    snd_sparks.pause()        
+                    //snd_sparkSuccess.play()                    
+                }                    
+            }
+            else
+            {
+                ropeColor[0] = ropeColorDefault
+                snd_sparks.pause()                
+            }
+        }
+        else // ropeAttached == true
+        {
+            if(spacebarIsDown && ropeCanBeAttachedOrDetached) 
+                detachRope()
+        }        
+    } 
+
+    var time = 0
+
+    var __lastTime = 0
+    var __timeStep = 1000 / 60
+    var __accumulator = 0
+
+
+
+
+
+    var drawArrow = (x,y,xmul,color,alpha) => {
+        var sx = 70 * xmul
+        var sy = 70
+        ctx.fillStyle = color
+        ctx.globalAlpha = alpha
+        ctx.beginPath();
+        ctx.moveTo(-0.04 * sx + x, -0.17 * sy + y);
+        ctx.lineTo(-0.04 * sx + x, 0.2   * sy + y);
+        ctx.lineTo( 0.45 * sx + x, 0.21  * sy + y);
+        ctx.lineTo( 0.47 * sx + x, 0.5   * sy + y);
+        ctx.lineTo( 1.03 * sx + x, 0.01  * sy + y);
+        ctx.lineTo( 0.44 * sx + x, -0.43 * sy + y);
+        ctx.lineTo( 0.45 * sx + x, -0.16 * sy + y);
+        ctx.fill();
+        ctx.globalAlpha = 1        
+    }
+
+
+
+    function updateAndRender(t) {
+        
+        if (__lastTime === 0) __lastTime = t;
+        var dt = t - __lastTime;
+        __lastTime = t;
+        
+        if (dt > 100) dt = 100;
+        __accumulator += dt;
+
+        if (__accumulator < __timeStep) {
+            requestAnimationFrame(updateAndRender);
+            return;
+        }
+        __accumulator = __accumulator % __timeStep;
+
+        time = t / 1000
+
+        if(!startedAudio && key[space] || key[up] || key[down] || key[left] || key[right] || key[keyW] || key[keyA] || key[keyS] || key[keyD]) {
+            startedAudio = true
+            snd_theme.play()
+        }
+
+        handleRopeAttachment()
+
+        var dirx = (key[right] || key[keyD] ? 1 : 0) + (key[left] || key[keyA] ? -1 : 0)
+        var diry = (key[down ] || key[keyS] ? 1 : 0) + (key[up  ] || key[keyW] ? -1 : 0)
+
+
+        // get ship position and velocity 
+        // we use average so that rotation doesn't affect the position so much
+        var shipX = 0;
+        var shipY = 0;
+        var shipVelocityX = 0;
+        var shipVelocityY = 0;
+        var averageN = 4
+        for(var i = 0; i < averageN; i++) {
+            shipX += playerShip.vObjects[i].x / averageN
+            shipY += playerShip.vObjects[i].y / averageN
+            shipVelocityX += (playerShip.vObjects[i].x - playerShip.vObjects[i].px) / averageN
+            shipVelocityY += (playerShip.vObjects[i].y - playerShip.vObjects[i].py) / averageN
+        }
+
+
+
+        //ctx.clearRect(0, 0, canvas.width, canvas.height);
+        var shipPosYNormalized = smoothstep(-1100, 400, shipY)
+        var gradMul = 1 / (shipPosYNormalized + 0.1)
+        var gradOfs = -3 * shipPosYNormalized
+        var gradDiv = 13 + gradOfs
+        const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        gradient.addColorStop(clamp(gradMul*(0+gradOfs)/gradDiv, 0, 1), '#000102');
+        gradient.addColorStop(clamp(gradMul*(1+gradOfs)/gradDiv, 0, 1), '#010207');
+        gradient.addColorStop(clamp(gradMul*(2+gradOfs)/gradDiv, 0, 1), '#040513');
+        gradient.addColorStop(clamp(gradMul*(3+gradOfs)/gradDiv, 0, 1), '#05071a');
+        gradient.addColorStop(clamp(gradMul*(4+gradOfs)/gradDiv, 0, 1), '#06081f');
+        gradient.addColorStop(clamp(gradMul*(5+gradOfs)/gradDiv, 0, 1), '#070923');
+        gradient.addColorStop(clamp(gradMul*(6+gradOfs)/gradDiv, 0, 1), '#070a25');
+        gradient.addColorStop(clamp(gradMul*(7+gradOfs)/gradDiv, 0, 1), '#080c2c');
+        gradient.addColorStop(clamp(gradMul*(8+gradOfs)/gradDiv, 0, 1), '#0b0e32');        
+        gradient.addColorStop(clamp(gradMul*(9+gradOfs)/gradDiv, 0, 1), '#141437');
+        gradient.addColorStop(clamp(gradMul*(10+gradOfs)/gradDiv, 0, 1), '#221b3e');
+        gradient.addColorStop(clamp(gradMul*(11+gradOfs)/gradDiv, 0, 1), '#322242');        
+        gradient.addColorStop(clamp(gradMul*(12+gradOfs)/gradDiv, 0, 1), '#54334e');
+        gradient.addColorStop(clamp(gradMul*(13+gradOfs)/gradDiv, 0, 1), '#614256');        
+        ctx.fillStyle = gradient        
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+
+
+
+
+
+
+
+        // calc camera
+        var camTargetX = shipX
+        var camTargetY = shipY
+
+        // zoom in x at the home base/starting point
+        var cameraZoomClosest = 1 
+        var cameraZoomFurthest = 0.6
+        var camZoom = mix(cameraZoomFurthest, cameraZoomClosest, smoothstep(-1000, 300, shipY))
+
+        // when moving, show more in the direction of movement
+        camTargetX += shipVelocityX * 40 / camZoom; 
+        camTargetY += shipVelocityY * 40 / camZoom;
+        
+        // don't show outside of the world
+        camTargetX = clamp(camTargetX, worldMinX + screenW*0.5/cameraZoom, worldMaxX - screenW*0.5/cameraZoom)
+        camTargetY = clamp(camTargetY, worldMinY + screenH*0.5/cameraZoom, worldMaxY - screenH*0.5/cameraZoom)    
+        
+        // don't scroll in x at the home base/starting point
+        if(abs(camTargetX - worldStartRefX) < worldScaleX * 6)
+            camTargetX = mix(camTargetX, worldStartRefX, smoothstep(-100, 100, camTargetY))
+
+        // smoothing
+        if(cameraTargetX == -666) {
+            // init
+            prevCameraTargetX = cameraTargetX = cameraTargetXS = camTargetX
+            prevCameraTargetY = cameraTargetY = cameraTargetYS =camTargetY
+            cameraZoom = cameraZoomS = camZoom
+        }
+        else {
+            prevCameraTargetX = cameraTargetX
+            prevCameraTargetY = cameraTargetY
+
+            // do "double" smoothing (12 db)            
+            cameraTargetXS = mix(cameraTargetXS, camTargetX, .1)
+            cameraTargetYS = mix(cameraTargetYS, camTargetY, .1)
+            cameraZoomS = mix(cameraZoomS, camZoom, .1)
+
+            cameraTargetX = mix(cameraTargetX, cameraTargetXS, .1)
+            cameraTargetY = mix(cameraTargetY, cameraTargetYS, .1)
+            cameraZoom = mix(cameraZoom, cameraZoomS, .1)
+        }
+
+        ctx.save();
+        ctx.translate(screenW/2, screenH/2);
+        ctx.scale(cameraZoom, cameraZoom);
+        ctx.translate(-cameraTargetX, -cameraTargetY);
+
+
+
+        var sens = 0.3;
+        var thrusterDownLGain = max(0, -diry - dirx*0.5) * sens
+        var thrusterDownRGain = max(0, -diry + dirx*0.5) * sens
+        var thrusterUpLGain = max(0, diry*0.6 + dirx*0.5) * sens
+        var thrusterUpRGain = max(0, diry*0.6 - dirx*0.5) * sens 
+        if(thrusterDownLGain > 0)
+            updateThruster(playerShip.vOffset + thrusterDownL, playerShip.vOffset + thrusterDownL + 2, thrusterDownLGain)
+        if(thrusterDownRGain > 0)
+            updateThruster(playerShip.vOffset + thrusterDownR + 2, playerShip.vOffset + thrusterDownR, thrusterDownRGain)
+        if(thrusterUpLGain > 0)
+            updateThruster(playerShip.vOffset + thrusterUpL + 2, playerShip.vOffset + thrusterUpL, thrusterUpLGain)
+        if(thrusterUpRGain > 0)
+            updateThruster(playerShip.vOffset + thrusterUpR, playerShip.vOffset + thrusterUpR + 2, thrusterUpRGain)        
+            
+        var thrustAmount = max(max(thrusterDownLGain, thrusterDownRGain), max(thrusterUpLGain, thrusterUpRGain))
+        if(thrustAmount > 0) {
+            snd_engine.volume = clamp(thrustAmount / sens, 0, 1)
+            snd_engine.play()
+        }
+        else {
+            snd_engine.pause()
+        }
+
+
+
+        updatePhysics()
+
+
+
+        // Render 3D star field
+        var startN = 1000
+        var starsSizeW = screenW/cameraZoomFurthest
+        var starsSizeH = screenH/cameraZoomFurthest
+        ctx.lineCap = 'round' // round makes more sense for stars/motion blur        
+        for(var i = 0; i < startN; i++) {
+            var normI = i/startN
+
+            // calculate z based on i 
+            // we want stars in the same plane as the ship and world (1.0)
+            // and further, but never so far away that they don't move with camera
+            var z = 1.0 + 20 * Math.pow(normI, 3.0) 
+            var ooz = 1/z
+
+            // calc motion blur
+            var cdx = (cameraTargetX - prevCameraTargetX) * ooz
+            var cdy = (cameraTargetY - prevCameraTargetY) * ooz
+            var len = Math.sqrt(cdx*cdx + cdy*cdy)
+
+            // ensure all most of the stars end up on screen (adding 9999 as a hack to avoid negative numbers)
+            var x = (rnd[i     ] * starsSizeW - cameraTargetX*ooz + 9999)%starsSizeW + cameraTargetX - starsSizeW/2
+            var y = (rnd[i+1000] * starsSizeH - cameraTargetY*ooz + 9999)%starsSizeH + cameraTargetY - starsSizeH/2
+
+            doLine(x, y, x + cdx, y + cdy, '#fff', 
+                        (1-normI) *      // fade out by distance, kind of
+                        rnd[i + 2000] /  // give each star it's own intensity
+                        (1 + len*0.4)    // reduce intensity to compensate the longer lines of motion blur
+                        )
+        }
+        ctx.lineCap = 'butt'
+
+
+
+        // Render Springs
+        var N = springs.length
+        for(var i = 0; i < N; i++) {
+            var s = springs[N - 1 - i]
+            doLine(s.o1.x, s.o1.y, s.o2.x, s.o2.y,s.colorRef[0],1)
+        }        
+
+        
+        if(thrusterDownLGain > 0)
+            drawThruster(playerShip.vOffset + thrusterDownL, playerShip.vOffset + thrusterDownL + 2, thrusterDownLGain)
+        if(thrusterDownRGain > 0)
+            drawThruster(playerShip.vOffset + thrusterDownR + 2, playerShip.vOffset + thrusterDownR, thrusterDownRGain)
+        if(thrusterUpLGain > 0)
+            drawThruster(playerShip.vOffset + thrusterUpL + 2, playerShip.vOffset + thrusterUpL, thrusterUpLGain)
+        if(thrusterUpRGain > 0)
+            drawThruster(playerShip.vOffset + thrusterUpR, playerShip.vOffset + thrusterUpR + 2, thrusterUpRGain)        
+
+
+        renderWorld()
+
+
+
+        // handle game progess / "level"
+        var gameProgressIsPickup = (gameProgress & 1) == 0 // alternate pickup/leave boxes obviously
+
+        if(gameProgressIsPickup)
+        {
+            if(correctBoxAttached) {
+                gameProgress++
+                snd_welldone.play()
+            }
+        }
+        else
+        {
+            // drop-off
+            if(correctBoxAttached)
+            {
+                if(attachedBox.insideRect(getLocation(gameProgress)) ) {
+                    gameProgress++
+                    snd_welldone.play()
+                    detachRope()
+                    droppedOffBox = attachedBox
+                    var newLoc = getLocation(gameProgress)
+                    var newBox = getCorrectBox(gameProgress)
+                    newBox.resetAtPos(newLoc.x, newLoc.y)
+                    correctBoxAttached = false
+                }
+            }
+        }
+
+
+
+        gameProgressSmoothed = mix(gameProgressSmoothed, gameProgress, 0.02)
+        var gameProgressTransition = abs(gameProgressSmoothed - gameProgress) > 0.001
+        if(!gameProgressTransition) 
+            gameProgressSmoothed = floor(gameProgressSmoothed + 0.5)
+
+
+
+
+        var helpColor = '#55ff55'
+        for(var i = 0; i < 2; i++) {
+            var gameProgressId = floor(gameProgressSmoothed) + i
+            var location = getLocation(gameProgressId);
+            var locationAmount = 1-abs(gameProgressSmoothed - gameProgressId)
+            if(location && locationAmount > 0.005) {
+                var opacity = gameProgressTransition || (time%1) > 0.5 ? 0.22 : 0.17
+                opacity *= locationAmount
+                doRect(location.areaMinX, location.areaMinY, location.areaW, location.areaH, helpColor, opacity)
+            }    
+            //console.log(i+' '+gameProgressId+ ' '+gameProgressSmoothed+' '+locationAmount)
+
+        }
+     
+        ctx.restore(); 
+
+        var diff = getLocation(gameProgress).x - shipX;
+        if(abs(diff) > screenW*0.6/cameraZoom) {
+            var amt = clamp((abs(diff) - screenW*0.6/cameraZoom) / 100, 0, 1)
+            if(diff < 0)
+                drawArrow(100,50,-1,helpColor,amt*(0.17 + 0.1*Math.sin(time*2)))
+            else
+                drawArrow(screenW-100,50,1,helpColor,amt*(0.17 + 0.1*Math.sin(time*2)))
+        }
+                
+        /*
+        t /= 1000; // ms to sec
+        glsl({t, // pass uniform 't' to GLSL
+            Mesh:[10, 10],  // draw a 10x10 tessellated plane mesh
+            // Vertex shader expression returns vec4 vertex position in
+            // WebGL clip space. 'XY' and 'UV' are vec2 input vertex 
+            // coordinates in [-1,1] and [0,1] ranges.
+            VP:`XY*0.8+sin(t+XY.yx*2.0)*0.2,0,1`,
+            // Fragment shader returns 'RGBA'
+            FP:`UV,0.5,1`});
+
+            //glsl.gl.bindTexture  (gl.TEXTURE_2D, shipTex)
+
+            if(shipTex != null) {
+                glsl({t,shipTex, Mesh:[1,1], VP:`XY*0.8+sin(t+XY.yx*2.0)*0.2,0,1`,
+                    FP:`shipTex(ivec2(UV*512.))`});                
+            }
+        */
+
+        requestAnimationFrame(updateAndRender);
+    }
+    requestAnimationFrame(updateAndRender);
+</script>
+</html>
