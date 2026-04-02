@@ -18,6 +18,6 @@ My plan was to have a protection shield so you can actually bounce (limited time
 
 It's about ~900 lines of js (canvas 2d API), music/sounds created in Reaper using Synth1 by Daichi. 
 
-Changes from the original version: 
+Changes from the [original version](https://ldjam.com/events/ludum-dare/53/delivery-force): 
  * fixed timing issues on systems not using 60hz displays
  * added stars to give a better sense of travel
